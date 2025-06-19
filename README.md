@@ -1,6 +1,6 @@
-# UDP Time Sender
+# Masterclock Time Sender
 
-Sends current time as UDP multicast datagrams to 239.252.0.0:6168 every second.
+Sends current time as UDP multicast datagrams to 239.252.0.0:6168 every second as expected by Masterclock NTDS units.
 
 ## Usage
 
