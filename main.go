@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 )
 
@@ -15,7 +18,7 @@ var key = []byte{0x74, 0x12, 0x02, 0xfb, 0xcc, 0x24, 0x5b, 0x82, 0x61, 0xe7, 0x3
 const (
 	// Multicast configuration
 	multicastAddr = "239.252.0.0:6168"
-	
+
 	// Packet header constants (in hex)
 	HDR1   = 0x2381D765  // HDR1 4 bytes
 	HDR2   = 0x10B32FE1  // HDR2 4 bytes
@@ -55,51 +58,109 @@ func main() {
 	fmt.Printf("Sending time packets to multicast address %s\n", multicastAddr)
 	fmt.Println("Press Ctrl+C to stop...")
 
+	// Create a stop channel to signal termination
+    stop := make(chan struct{})
+
+    // Set up signal handling
+    sigChan := make(chan os.Signal, 1)
+    signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+
+    // Goroutine to handle termination signals
+    go func() {
+        <-sigChan
+        fmt.Println("\nTermination signal received. Sending final packet...")
+
+        // Create final packet with CTRLCODE=0 and H=0, M=0, S=0
+        finalPacket := TimePacket{
+            HDR1:     HDR1,
+            HDR2:     HDR2,
+            RSRV1:    0,
+            DEVICE:   0x1234, // Assuming a device ID; adjust if needed
+            FAMILY:   FAMILY,
+            RSRV2:    [3]byte{0, 0, 0},
+            ZEROS:    0x00,
+            RSRV3:    [24]byte{},
+            CTRLCODE: 0x00, // Set to 0 to indicate session end
+            H:        0x00,
+            M:        0x00,
+            S:        0x00,
+        }
+
+        // Convert to bytes
+        data, err := packetToBytes(finalPacket)
+        if err != nil {
+            log.Printf("Error creating final packet: %v", err)
+        } else {
+            // Encrypt the packet
+            crypt(data)
+            // Send the encrypted final packet
+            _, err = conn.Write(data)
+            if err != nil {
+                log.Printf("Error sending final packet: %v", err)
+            } else {
+                fmt.Println("Sent final packet with CTRLCODE=0")
+            }
+        }
+
+        // Signal the main loop to stop
+        close(stop)
+    }()
+
 	// Send packets every second
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 
-	for range ticker.C {
-		now := time.Now()
-		
-		// Create packet with current time
-		packet := TimePacket{
-			HDR1:     HDR1,
-			HDR2:     HDR2,
-			RSRV1:    0,              // Zero-filled
-			DEVICE:   0x1234,         // Example device ID (you can modify this)
-			FAMILY:   FAMILY,
-			RSRV2:    [3]byte{0, 0, 0}, // Zero-filled
-			ZEROS:    0x00,           // Leading zeros ON
-			RSRV3:    [24]byte{},     // Zero-filled by default
-			CTRLCODE: 0x02,           // Clock displays H:M:S values
-			H:        byte(now.Hour()),
-			M:        byte(now.Minute()),
-			S:        byte(now.Second()),
-		}
+	// Main loop: send packets until stop is signaled
+loop:
+    for {
+        select {
+        case <-ticker.C:
+            now := time.Now()
+            // Create regular packet with current time
+            packet := TimePacket{
+                HDR1:     HDR1,
+                HDR2:     HDR2,
+                RSRV1:    0,
+                DEVICE:   0x1234,
+                FAMILY:   FAMILY,
+                RSRV2:    [3]byte{0, 0, 0},
+                ZEROS:    0x00,
+                RSRV3:    [24]byte{},
+                CTRLCODE: 0x02, // Regular control code
+                H:        byte(now.Hour()),
+                M:        byte(now.Minute()),
+                S:        byte(now.Second()),
+            }
 
-		// Convert packet to bytes
-		data, err := packetToBytes(packet)
-		if err != nil {
-			log.Printf("Error converting packet to bytes: %v", err)
-			continue
-		}
+            // Convert to bytes
+            data, err := packetToBytes(packet)
+            if err != nil {
+                log.Printf("Error converting packet to bytes: %v", err)
+                continue
+            }
 
-		// Encrypt the packet
-        crypt(data)
-        
-		// Send packet
-		_, err = conn.Write(data)
-		if err != nil {
-			log.Printf("Error sending packet: %v", err)
-			continue
-		}
+            // Encrypt the packet
+            crypt(data)
 
-		fmt.Printf("Sent time packet: %02d:%02d:%02d (H:0x%02X M:0x%02X S:0x%02X)\n", 
-			now.Hour(), now.Minute(), now.Second(),
-			packet.H, packet.M, packet.S)
-	}
+            // Send the encrypted packet
+            _, err = conn.Write(data)
+            if err != nil {
+                log.Printf("Error sending packet: %v", err)
+                continue
+            }
+
+            fmt.Printf("Sent encrypted time packet: %02d:%02d:%02d (H:0x%02X M:0x%02X S:0x%02X)\n",
+                now.Hour(), now.Minute(), now.Second(),
+                packet.H, packet.M, packet.S)
+
+        case <-stop:
+            break loop
+        }
+    }
+
+    fmt.Println("Program terminated gracefully.")
 }
+
 
 // packetToBytes converts the TimePacket struct to a byte slice
 func packetToBytes(packet TimePacket) ([]byte, error) {
@@ -110,8 +171,7 @@ func packetToBytes(packet TimePacket) ([]byte, error) {
     }
     return buf.Bytes(), nil
 }
- 
- 
+
 // crypt encrypts the buffer in place using a simple XOR-based stream cipher
 func crypt(buf []byte) {
     padcnt := byte(1)
