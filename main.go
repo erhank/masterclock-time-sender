@@ -1,12 +1,16 @@
 package main
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"log"
 	"net"
 	"time"
 )
+
+// Key for encryption, matching the C implementation
+var key = []byte{0x74, 0x12, 0x02, 0xfb, 0xcc, 0x24, 0x5b, 0x82, 0x61, 0xe7, 0x3f, 0x9a, 0x26, 0x7c, 0xd3, 0xa0, 0x42}
 
 const (
 	// Multicast configuration
@@ -81,6 +85,9 @@ func main() {
 			continue
 		}
 
+		// Encrypt the packet
+        crypt(data)
+        
 		// Send packet
 		_, err = conn.Write(data)
 		if err != nil {
@@ -96,57 +103,28 @@ func main() {
 
 // packetToBytes converts the TimePacket struct to a byte slice
 func packetToBytes(packet TimePacket) ([]byte, error) {
-	// Calculate total packet size
-	// 4+4+2+2+4+3+1+24+1+1+1+1 = 48 bytes
-	data := make([]byte, 48)
-	offset := 0
-
-	// HDR1 (4 bytes, big-endian)
-	binary.BigEndian.PutUint32(data[offset:], packet.HDR1)
-	offset += 4
-
-	// HDR2 (4 bytes, big-endian)
-	binary.BigEndian.PutUint32(data[offset:], packet.HDR2)
-	offset += 4
-
-	// RSRV1 (2 bytes, big-endian)
-	binary.BigEndian.PutUint16(data[offset:], packet.RSRV1)
-	offset += 2
-
-	// DEVICE (2 bytes, big-endian)
-	binary.BigEndian.PutUint16(data[offset:], packet.DEVICE)
-	offset += 2
-
-	// FAMILY (4 bytes, big-endian)
-	binary.BigEndian.PutUint32(data[offset:], packet.FAMILY)
-	offset += 4
-
-	// RSRV2 (3 bytes)
-	copy(data[offset:offset+3], packet.RSRV2[:])
-	offset += 3
-
-	// ZEROS (1 byte)
-	data[offset] = packet.ZEROS
-	offset += 1
-
-	// RSRV3 (24 bytes)
-	copy(data[offset:offset+24], packet.RSRV3[:])
-	offset += 24
-
-	// CTRLCODE (1 byte)
-	data[offset] = packet.CTRLCODE
-	offset += 1
-
-	// H (1 byte)
-	data[offset] = packet.H
-	offset += 1
-
-	// M (1 byte)
-	data[offset] = packet.M
-	offset += 1
-
-	// S (1 byte)
-	data[offset] = packet.S
-
-	return data, nil
+    buf := new(bytes.Buffer)
+    err := binary.Write(buf, binary.BigEndian, &packet)
+    if err != nil {
+        return nil, err
+    }
+    return buf.Bytes(), nil
+}
+ 
+ 
+// crypt encrypts the buffer in place using a simple XOR-based stream cipher
+func crypt(buf []byte) {
+    padcnt := byte(1)
+    keycnt := 0
+    for i := range buf {
+        buf[i] ^= padcnt ^ key[keycnt]
+        keycnt++
+        if keycnt == len(key) {
+            keycnt = 0
+        }
+        padcnt++
+        if padcnt == 254 {
+            padcnt = 1
+        }
+    }
 }
