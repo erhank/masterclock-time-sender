@@ -13,9 +13,9 @@ echo ""
 case $1 in
   "build"|"1")
     echo "Building applications..."
-    go build -o time-sender main.go
-    go build -o packet-listener listener.go
-    go build -o packet-test test.go packet.go
+    go build -o bin/time-sender main.go
+    go build -o bin/packet-listener listener.go
+    go build -o bin/packet-test test.go packet.go
     echo "Built: time-sender, packet-listener, packet-test"
     ;;
   "send"|"2")
